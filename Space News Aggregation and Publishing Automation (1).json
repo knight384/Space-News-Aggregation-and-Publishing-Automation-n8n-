@@ -1,0 +1,1650 @@
+{
+  "name": "Space News Aggregation and Publishing Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "e97f5c52-c1ce-4c81-973d-0cb63ae5bcc7",
+      "name": "Every 15 Minutes - News Collection",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        256,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "00c55b23-e91c-44c8-9b45-37f42e40cd46",
+      "name": "Daily 06:00 UTC - Digest Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        256,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.nasa.gov/rss/dyn/breaking_news.rss",
+        "options": {}
+      },
+      "id": "92409250-cc60-4f6a-93ad-7ec12a8772fe",
+      "name": "RSS - NASA/ESA/Space.com",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "searchText": "space OR NASA OR SpaceX OR rocket since:2h",
+        "additionalFields": {}
+      },
+      "id": "44b14fb6-968a-4aa1-9bd2-8410880db2f9",
+      "name": "Twitter - Space Handles",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [
+        480,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "url": "<__PLACEHOLDER_VALUE__custom_api_endpoint__>",
+        "options": {}
+      },
+      "id": "075d09e2-fa6e-45cc-8b50-29743230d312",
+      "name": "HTTP API - Custom Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        480,
+        400
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "b6c01fc3-f23c-45d2-af5b-9555de56bcbe",
+      "name": "Merge All News Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        704,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "source_url",
+              "value": "={{ $json.link || $json.url || $json.source_url }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "title",
+              "value": "={{ $json.title || $json.text }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "published_at",
+              "value": "={{ $json.pubDate || $json.created_at || $json.published_at }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "raw_content",
+              "value": "={{ $json.content || $json.description || $json.full_text }}",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "source_type",
+              "value": "={{ $json.source_type || 'unknown' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5fe9b41-5c06-4ab4-a85a-9173dbfcce46",
+      "name": "Normalize Source Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        928,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "value": "={{ $json.source_url }}",
+        "dataPropertyName": "url_hash"
+      },
+      "id": "edc3117c-6e54-414e-bb9f-66dac8251af5",
+      "name": "Generate URL Hash",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deduplication Logic: URL hash, headline similarity, and time window filtering\n\n// Helper function: Calculate Levenshtein distance for headline similarity\nfunction levenshteinDistance(str1, str2) {\n  const len1 = str1.length;\n  const len2 = str2.length;\n  const matrix = [];\n  \n  for (let i = 0; i <= len1; i++) {\n    matrix[i] = [i];\n  }\n  \n  for (let j = 0; j <= len2; j++) {\n    matrix[0][j] = j;\n  }\n  \n  for (let i = 1; i <= len1; i++) {\n    for (let j = 1; j <= len2; j++) {\n      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;\n      matrix[i][j] = Math.min(\n        matrix[i - 1][j] + 1,\n        matrix[i][j - 1] + 1,\n        matrix[i - 1][j - 1] + cost\n      );\n    }\n  }\n  \n  return matrix[len1][len2];\n}\n\n// Helper function: Calculate similarity percentage\nfunction calculateSimilarity(str1, str2) {\n  const distance = levenshteinDistance(str1.toLowerCase(), str2.toLowerCase());\n  const maxLength = Math.max(str1.length, str2.length);\n  return maxLength === 0 ? 100 : ((maxLength - distance) / maxLength) * 100;\n}\n\n// Get current time and 2-hour threshold\nconst now = new Date();\nconst twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);\n\n// Track seen items - initialize with previously seen URL hashes from database\nconst seenHashes = new Set();\n\n// Load previously seen URL hashes from Check Seen URLs node\nconst previouslySeenItems = $('Check Seen URLs').all();\nfor (const seenItem of previouslySeenItems) {\n  if (seenItem.json.url_hash) {\n    seenHashes.add(seenItem.json.url_hash);\n  }\n}\n\nconsole.log(`Loaded ${seenHashes.size} previously seen URL hashes from database`);\n\nconst seenHeadlines = [];\nconst deduplicatedItems = [];\n\n// Process all items\nfor (const item of $input.all()) {\n  const urlHash = item.json.url_hash;\n  const title = item.json.title || '';\n  const publishedAt = item.json.published_at ? new Date(item.json.published_at) : null;\n  \n  // Skip if no URL hash\n  if (!urlHash) {\n    continue;\n  }\n  \n  // Check 1: URL hash deduplication (includes previously seen URLs)\n  if (seenHashes.has(urlHash)) {\n    console.log(`Duplicate URL hash detected: ${urlHash}`);\n    continue;\n  }\n  \n  // Check 2: Time window filtering (only items within last 2 hours)\n  if (publishedAt && publishedAt < twoHoursAgo) {\n    console.log(`Item too old: ${title} (${publishedAt})`);\n    continue;\n  }\n  \n  // Check 3: Headline similarity (80% threshold)\n  let isDuplicateHeadline = false;\n  for (const seenTitle of seenHeadlines) {\n    const similarity = calculateSimilarity(title, seenTitle);\n    if (similarity >= 80) {\n      console.log(`Similar headline detected: \"${title}\" vs \"${seenTitle}\" (${similarity.toFixed(2)}% similar)`);\n      isDuplicateHeadline = true;\n      break;\n    }\n  }\n  \n  if (isDuplicateHeadline) {\n    continue;\n  }\n  \n  // Item passed all checks - add to results\n  seenHashes.add(urlHash);\n  seenHeadlines.push(title);\n  deduplicatedItems.push(item);\n}\n\nconsole.log(`Deduplication complete: ${$input.all().length} items -> ${deduplicatedItems.length} unique items`);\n\nreturn deduplicatedItems;"
+      },
+      "id": "23ad8886-a9bc-483f-9147-4b2701b388d4",
+      "name": "Deduplication Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<__PLACEHOLDER_VALUE__seen_urls_table__>"
+        },
+        "returnAll": true
+      },
+      "id": "de25025a-23df-479b-b872-07a921b22bf2",
+      "name": "Check Seen URLs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1600,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.raw_content }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a space news metadata extractor. Extract structured information from the provided article including title, summary, full text, author, publication date, source URL, relevant tags, and detected entities (missions, spacecraft, people, agencies). Be thorough and accurate."
+        }
+      },
+      "id": "6bcbc216-98ca-401a-b26b-59bc6b2ef286",
+      "name": "AI Agent - Extract Metadata",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2048,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "0f2d5619-4658-4ab8-88fa-16924b78435d",
+      "name": "OpenAI GPT-4 Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2064,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n\t\"type\": \"object\",\n\t\"properties\": {\n\t\t\"title\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"summary\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"full_text\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"author\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"published_at\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"source_url\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"tags\": {\n\t\t\t\"type\": \"array\",\n\t\t\t\"items\": {\n\t\t\t\t\"type\": \"string\"\n\t\t\t}\n\t\t},\n\t\t\"detected_entities\": {\n\t\t\t\"type\": \"object\",\n\t\t\t\"properties\": {\n\t\t\t\t\"missions\": {\n\t\t\t\t\t\"type\": \"array\",\n\t\t\t\t\t\"items\": {\n\t\t\t\t\t\t\"type\": \"string\"\n\t\t\t\t\t}\n\t\t\t\t},\n\t\t\t\t\"spacecraft\": {\n\t\t\t\t\t\"type\": \"array\",\n\t\t\t\t\t\"items\": {\n\t\t\t\t\t\t\"type\": \"string\"\n\t\t\t\t\t}\n\t\t\t\t},\n\t\t\t\t\"people\": {\n\t\t\t\t\t\"type\": \"array\",\n\t\t\t\t\t\"items\": {\n\t\t\t\t\t\t\"type\": \"string\"\n\t\t\t\t\t}\n\t\t\t\t},\n\t\t\t\t\"agencies\": {\n\t\t\t\t\t\"type\": \"array\",\n\t\t\t\t\t\"items\": {\n\t\t\t\t\t\t\"type\": \"string\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}"
+      },
+      "id": "51e2bac8-77a0-4fba-b73e-de41008a2da4",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2192,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Calculate Credibility Score (0-100)\n// Based on: official domains, cross-source confirmation, primary source links\n\nconst item = $input.item.json;\nlet credibilityScore = 0;\n\n// Extract source URL\nconst sourceUrl = item.source_url || '';\nconst sourceDomain = sourceUrl ? new URL(sourceUrl).hostname.toLowerCase() : '';\n\n// Check 1: Official domains (+40 points)\nconst officialDomains = ['.gov', 'nasa.gov', 'esa.int', 'spacex.com', 'jaxa.jp', 'roscosmos.ru'];\nconst isOfficialDomain = officialDomains.some(domain => sourceDomain.includes(domain));\n\nif (isOfficialDomain) {\n  credibilityScore += 40;\n  console.log(`Official domain detected: ${sourceDomain} (+40 points)`);\n}\n\n// Check 2: Cross-source confirmation within 2 hours (+30 points)\n// This checks if similar content exists from other sources in the workflow context\nconst allItems = $input.all();\nconst currentTitle = (item.title || '').toLowerCase();\nconst currentPublishedAt = item.published_at ? new Date(item.published_at) : new Date();\nconst twoHoursWindow = 2 * 60 * 60 * 1000;\n\nlet crossSourceConfirmation = false;\nfor (const otherItem of allItems) {\n  if (otherItem.json.source_url === sourceUrl) continue; // Skip same source\n  \n  const otherTitle = (otherItem.json.title || '').toLowerCase();\n  const otherPublishedAt = otherItem.json.published_at ? new Date(otherItem.json.published_at) : new Date();\n  \n  // Check if titles share significant keywords and are within 2 hours\n  const titleWords = currentTitle.split(' ').filter(w => w.length > 4);\n  const otherWords = otherTitle.split(' ').filter(w => w.length > 4);\n  const commonWords = titleWords.filter(w => otherWords.includes(w));\n  \n  const timeDiff = Math.abs(currentPublishedAt - otherPublishedAt);\n  \n  if (commonWords.length >= 3 && timeDiff <= twoHoursWindow) {\n    crossSourceConfirmation = true;\n    break;\n  }\n}\n\nif (crossSourceConfirmation) {\n  credibilityScore += 30;\n  console.log(`Cross-source confirmation found (+30 points)`);\n}\n\n// Check 3: Presence of primary source link (+30 points)\n// Check if the raw content or full text contains links to official sources\nconst rawContent = (item.raw_content || item.full_text || '').toLowerCase();\nconst hasPrimarySourceLink = officialDomains.some(domain => rawContent.includes(domain));\n\nif (hasPrimarySourceLink) {\n  credibilityScore += 30;\n  console.log(`Primary source link detected (+30 points)`);\n}\n\nconsole.log(`Final credibility score for \"${item.title}\": ${credibilityScore}/100`);\n\n// Return item with credibility score\nreturn {\n  json: {\n    ...item,\n    credibility_score: credibilityScore\n  }\n};"
+      },
+      "id": "d703ee29-24b9-45d8-a187-0d7979bcc79b",
+      "name": "Calculate Credibility Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json.credibility_score }}",
+              "rightValue": 60,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1fbf9ddc-8b61-4e3b-96e0-8c8543c30ad8",
+      "name": "Filter Score >= 60",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        2624,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ JSON.stringify($json) }}",
+        "options": {
+          "systemMessage": "You are a space news summarizer. Generate TWO summaries in JSON format: 1) short_summary: 50-75 words for Slack, 2) long_summary: 250-350 words for CMS/newsletter. Return as JSON: {\"short_summary\": \"...\", \"long_summary\": \"...\"}. Be engaging and informative."
+        }
+      },
+      "id": "7110f2e8-23e7-4ac7-bc0b-77a7befeef03",
+      "name": "AI Agent - Generate Summaries",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2848,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "09ef222e-fbcb-4aa6-be42-3f795fda6817",
+      "name": "OpenAI GPT-4 Summary Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2928,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "short_summary",
+              "value": "={{ JSON.parse($json.output).short_summary }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "long_summary",
+              "value": "={{ JSON.parse($json.output).long_summary }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "46f74b63-89b2-4e37-a1d9-dadac442122e",
+      "name": "Parse Summaries",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3200,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<__PLACEHOLDER_VALUE__slack_channel_id__>"
+        },
+        "text": "={{ $json.short_summary }}\n\nSource: {{ $json.source_url }}\nCredibility: {{ $json.credibility_score }}/100",
+        "otherOptions": {}
+      },
+      "id": "e8fd64aa-b8c1-48de-b9cd-1734d6085839",
+      "name": "Publish to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        3424,
+        1072
+      ],
+      "webhookId": "3d842101-f9c3-46b9-bfc3-b378a8577b09",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "<__PLACEHOLDER_VALUE__cms_api_endpoint__>",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": {{ $json.title }},\n  \"content\": {{ $json.long_summary }},\n  \"source_url\": {{ $json.source_url }},\n  \"tags\": {{ JSON.stringify($json.tags) }},\n  \"entities\": {{ JSON.stringify($json.detected_entities) }},\n  \"credibility_score\": {{ $json.credibility_score }}\n}",
+        "options": {}
+      },
+      "id": "cfd8234e-5101-4fb5-81a5-fe8e873f01ea",
+      "name": "Publish to CMS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3424,
+        688
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "url_hash",
+              "value": "={{ $json.url_hash }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "source_url",
+              "value": "={{ $json.source_url }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "raw_content",
+              "value": "={{ $json.raw_content }}",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "published_at",
+              "value": "={{ $json.published_at }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "collected_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bcdff8eb-89ff-4c7b-ada6-98c336d3de24",
+      "name": "Prepare Raw Storage",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3424,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<__PLACEHOLDER_VALUE__raw_articles_table__>"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        },
+        "options": {}
+      },
+      "id": "8700ff57-d93f-472e-853f-bbf8c3bcb1f0",
+      "name": "Store Raw Articles",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3648,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "url_hash",
+              "value": "={{ $json.url_hash }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "source_url",
+              "value": "={{ $json.source_url }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "summary",
+              "value": "={{ $json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "full_text",
+              "value": "={{ $json.full_text }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "author",
+              "value": "={{ $json.author }}",
+              "type": "string"
+            },
+            {
+              "id": "id-7",
+              "name": "published_at",
+              "value": "={{ $json.published_at }}",
+              "type": "string"
+            },
+            {
+              "id": "id-8",
+              "name": "tags",
+              "value": "={{ JSON.stringify($json.tags) }}",
+              "type": "string"
+            },
+            {
+              "id": "id-9",
+              "name": "detected_entities",
+              "value": "={{ JSON.stringify($json.detected_entities) }}",
+              "type": "string"
+            },
+            {
+              "id": "id-10",
+              "name": "credibility_score",
+              "value": "={{ $json.credibility_score }}",
+              "type": "number"
+            },
+            {
+              "id": "id-11",
+              "name": "short_summary",
+              "value": "={{ $json.short_summary }}",
+              "type": "string"
+            },
+            {
+              "id": "id-12",
+              "name": "long_summary",
+              "value": "={{ $json.long_summary }}",
+              "type": "string"
+            },
+            {
+              "id": "id-13",
+              "name": "processed_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "84fde2e9-4479-4e62-b15b-9afc3b5b8b01",
+      "name": "Prepare Processed Storage",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3424,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<__PLACEHOLDER_VALUE__processed_articles_table__>"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        },
+        "options": {}
+      },
+      "id": "f57c6002-f500-45ad-8946-ed484d440a34",
+      "name": "Store Processed Articles",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3648,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<__PLACEHOLDER_VALUE__processed_articles_table__>"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "processed_at",
+              "condition": "gte",
+              "keyValue": "={{ $now.minus({ days: 1 }).toISO() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "c2f223d4-0c1a-4110-9096-70e514ad4059",
+      "name": "Get Daily Articles",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "1aec80e6-02f0-40f1-8d55-f92ee6671d8e",
+      "name": "Aggregate for Digest",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        704,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format HTML email digest with all daily articles\n\nconst items = $input.all();\n\nif (items.length === 0) {\n  return [{\n    json: {\n      subject: 'Daily Space News Digest - No Articles Today',\n      html: '<html><body><h1>No new space news articles today</h1></body></html>'\n    }\n  }];\n}\n\n// Build HTML email\nlet htmlContent = `\n<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body {\n      font-family: Arial, sans-serif;\n      line-height: 1.6;\n      color: #333;\n      max-width: 800px;\n      margin: 0 auto;\n      padding: 20px;\n    }\n    h1 {\n      color: #1a73e8;\n      border-bottom: 3px solid #1a73e8;\n      padding-bottom: 10px;\n    }\n    .article {\n      margin-bottom: 40px;\n      padding: 20px;\n      background-color: #f9f9f9;\n      border-left: 4px solid #1a73e8;\n    }\n    .article-title {\n      font-size: 20px;\n      font-weight: bold;\n      color: #1a73e8;\n      margin-bottom: 10px;\n    }\n    .article-meta {\n      font-size: 14px;\n      color: #666;\n      margin-bottom: 15px;\n    }\n    .credibility-score {\n      display: inline-block;\n      padding: 4px 8px;\n      border-radius: 4px;\n      font-weight: bold;\n    }\n    .score-high {\n      background-color: #34a853;\n      color: white;\n    }\n    .score-medium {\n      background-color: #fbbc04;\n      color: white;\n    }\n    .score-low {\n      background-color: #ea4335;\n      color: white;\n    }\n    .article-summary {\n      margin-bottom: 15px;\n      line-height: 1.8;\n    }\n    .article-link {\n      color: #1a73e8;\n      text-decoration: none;\n    }\n    .article-link:hover {\n      text-decoration: underline;\n    }\n    .footer {\n      margin-top: 40px;\n      padding-top: 20px;\n      border-top: 2px solid #ddd;\n      text-align: center;\n      color: #666;\n      font-size: 14px;\n    }\n  </style>\n</head>\n<body>\n  <h1>🚀 Daily Space News Digest</h1>\n  <p><strong>Date:</strong> ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>\n  <p><strong>Total Articles:</strong> ${items.length}</p>\n  <hr>\n`;\n\n// Add each article\nfor (let i = 0; i < items.length; i++) {\n  const article = items[i].json;\n  const title = article.title || 'Untitled';\n  const longSummary = article.long_summary || article.summary || 'No summary available';\n  const sourceUrl = article.source_url || '#';\n  const credibilityScore = article.credibility_score || 0;\n  const publishedAt = article.published_at ? new Date(article.published_at).toLocaleString() : 'Unknown';\n  \n  // Determine credibility score class\n  let scoreClass = 'score-low';\n  if (credibilityScore >= 80) {\n    scoreClass = 'score-high';\n  } else if (credibilityScore >= 60) {\n    scoreClass = 'score-medium';\n  }\n  \n  htmlContent += `\n  <div class=\"article\">\n    <div class=\"article-title\">${i + 1}. ${title}</div>\n    <div class=\"article-meta\">\n      <span>Published: ${publishedAt}</span> | \n      <span>Credibility: <span class=\"credibility-score ${scoreClass}\">${credibilityScore}/100</span></span>\n    </div>\n    <div class=\"article-summary\">\n      ${longSummary}\n    </div>\n    <div>\n      <a href=\"${sourceUrl}\" class=\"article-link\" target=\"_blank\">Read Full Article →</a>\n    </div>\n  </div>\n  `;\n}\n\n// Add footer\nhtmlContent += `\n  <div class=\"footer\">\n    <p>This digest was automatically generated by your Space News Aggregation workflow.</p>\n    <p>Powered by n8n</p>\n  </div>\n</body>\n</html>\n`;\n\n// Return formatted email\nreturn [{\n  json: {\n    subject: `Daily Space News Digest - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} (${items.length} articles)`,\n    html: htmlContent,\n    articleCount: items.length\n  }\n}];"
+      },
+      "id": "9c848da2-dddd-4bc8-9d3c-6dd2c6f132eb",
+      "name": "Format Digest Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "<__PLACEHOLDER_VALUE__sender_email__>",
+        "toEmail": "<__PLACEHOLDER_VALUE__recipient_email__>",
+        "subject": "=Space News Daily Digest - {{ $now.toFormat('yyyy-MM-dd') }}",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "aa3e853f-c357-4249-bae4-6f50dbe88abd",
+      "name": "Send Daily Digest Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1152,
+        1296
+      ],
+      "webhookId": "a2354eda-2430-4c77-804a-db838d68f1aa",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "content": "📋 SETUP INSTRUCTIONS\n\n1. Create 3 Data Tables:\n   - seen_urls_table (columns: url_hash, seen_at)\n   - raw_articles_table (columns: url_hash, source_url, title, raw_content, published_at, collected_at)\n   - processed_articles_table (columns: url_hash, source_url, title, summary, full_text, author, published_at, tags, detected_entities, credibility_score, short_summary, long_summary, processed_at)\n\n2. Configure Credentials:\n   - Twitter API credentials\n   - OpenAI API key\n   - Slack Bot Token\n   - SMTP credentials for email\n\n3. Update Placeholders:\n   - Custom API endpoint\n   - Slack channel ID\n   - CMS API endpoint\n   - Email addresses\n\n4. Error Handling:\n   - HTTP nodes have retry with exponential backoff (max 5 retries)\n   - Slack and Email nodes have error outputs for logging\n\n5. Deduplication:\n   - URL hash matching\n   - Headline similarity (Levenshtein distance)\n   - 2-hour time window\n\nWorkflow runs every 15 minutes for collection.\nDaily digest sent at 06:00 UTC."
+      },
+      "id": "34457e77-4114-4243-ac5f-18057b09bf1e",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "error_source",
+              "value": "HTTP API - Custom Source",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "error_message",
+              "value": "={{ $json.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "error_time",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "failed_url",
+              "value": "={{ $('HTTP API - Custom Source').item.json.source_url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f0a09c97-30b4-4a79-bac3-75a0a0950948",
+      "name": "Log Error - HTTP API",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        704,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "error_source",
+              "value": "Slack Publishing",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "error_message",
+              "value": "={{ $json.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "error_time",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "article_title",
+              "value": "={{ $('Parse Summaries').item.json.title }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "280436fb-32f4-40b8-a859-3014ec194ffc",
+      "name": "Log Error - Slack",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3648,
+        1072
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "error_source",
+              "value": "CMS Publishing",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "error_message",
+              "value": "={{ $json.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "error_time",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "article_title",
+              "value": "={{ $('Parse Summaries').item.json.title }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8cb0e0b1-95b5-46ea-ac12-c2f218e48f54",
+      "name": "Log Error - CMS",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3648,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "error_source",
+              "value": "Email Digest",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "error_message",
+              "value": "={{ $json.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "error_time",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "71af0b16-6e6b-4d57-8584-d6a084bc6dc3",
+      "name": "Log Error - Email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1376,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<__PLACEHOLDER_VALUE__seen_urls_table__>"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        },
+        "options": {}
+      },
+      "id": "b71679ab-3399-40cd-9258-012165a95540",
+      "name": "Store Seen URL Hash",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3648,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "url_hash",
+              "value": "={{ $json.url_hash }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "seen_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2a3c6b3c-95b9-4d8c-9678-e501f0694282",
+      "name": "Prepare Seen URL Storage",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1376,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "url_hash",
+              "value": "={{ $json.url_hash }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "seen_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5212650f-3625-4919-97e1-24ecdb9e3f95",
+      "name": "Prepare URL Hash for Storage",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3424,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "6720df22-306d-4386-9021-62635f23e919",
+      "name": "Daily 09:00 UTC - LinkedIn Posting",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        1824,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        }
+      },
+      "id": "4f0909fa-49ff-473f-97d0-276e463f6610",
+      "name": "Read LinkedIn Topics",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2048,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bbcf0e54-e5df-43a5-826d-136ff1d176c0",
+      "name": "Filter Pending Topics",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        2272,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "messages": {
+          "message": [
+            {
+              "content": "={{ $json.topic }}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "9d4ce993-6345-4d0a-80e7-b30214c21d21",
+      "name": "Research Topic with Perplexity",
+      "type": "n8n-nodes-base.perplexityTool",
+      "typeVersion": 1,
+      "position": [
+        2624,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.topic }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a professional LinkedIn content creator specializing in space technology and innovation. Generate engaging LinkedIn posts that are educational, professional, and drive engagement. Follow these requirements: 150-250 words, strong hook in first line, professional tone, educational and engaging content, 3-5 relevant hashtags, end with a question for engagement."
+        }
+      },
+      "id": "ab0fa4e1-8aac-4162-aea3-667338f90437",
+      "name": "AI Agent - Generate LinkedIn Post",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2552,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "5d53bb55-aec4-42c0-aaec-7a621aca4f97",
+      "name": "OpenAI GPT-4 LinkedIn Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2496,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n\t\"type\": \"object\",\n\t\"properties\": {\n\t\t\"linkedin_post\": {\n\t\t\t\"type\": \"string\"\n\t\t},\n\t\t\"hashtags\": {\n\t\t\t\"type\": \"array\",\n\t\t\t\"items\": {\n\t\t\t\t\"type\": \"string\"\n\t\t\t}\n\t\t}\n\t}\n}"
+      },
+      "id": "a701c902-170c-4d49-8e82-4feec3cd9968",
+      "name": "LinkedIn Post Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2752,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        }
+      },
+      "id": "70db1c51-9d9b-4af2-9bb9-198d9ddde298",
+      "name": "Update Sheet - Mark Generated",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2960,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.linkedin_post }}\n\n{{ $json.hashtags.join(' ') }}",
+        "additionalFields": {}
+      },
+      "id": "af0d63e7-4a11-478f-9d23-198561ffa3f0",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [
+        3184,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        }
+      },
+      "id": "cb8928a9-769b-47c6-8ee3-5b61b31e4abb",
+      "name": "Update Sheet - Mark Posted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3408,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "error_source",
+              "value": "LinkedIn Posting",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "error_message",
+              "value": "={{ $json.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "error_time",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "topic",
+              "value": "={{ $('Filter Pending Topics').item.json.topic }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "83cb8d95-0307-4ef9-b00c-dcc4103498d5",
+      "name": "Log Error - LinkedIn",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1824,
+        632
+      ]
+    },
+    {
+      "parameters": {
+        "content": "📋 LINKEDIN AUTOMATION SETUP\n\n1. Google Sheets Configuration:\n   Create a sheet with columns:\n   - id (unique identifier)\n   - topic (the subject to research)\n   - status (pending/generated/posted)\n   - generated_content (AI-generated post)\n   - posted_at (timestamp)\n\n2. Configure Credentials:\n   - Google Sheets OAuth2\n   - LinkedIn OAuth2\n   - OpenAI API key\n   - Perplexity API (for research)\n\n3. Workflow Flow:\n   - Runs daily at 09:00 UTC\n   - Reads pending topics from Google Sheets\n   - Uses Perplexity to research the topic\n   - AI Agent generates LinkedIn post (150-250 words)\n   - Updates sheet with generated content\n   - Posts to LinkedIn\n   - Marks as posted with timestamp\n\n4. Post Requirements:\n   - Strong hook in first line\n   - Professional and educational tone\n   - 3-5 relevant hashtags\n   - Ends with engagement question\n\n5. Error Handling:\n   - LinkedIn posting has error output\n   - Errors logged for troubleshooting",
+        "color": 2
+      },
+      "id": "bfacd2bb-59f7-4fb1-984e-bcece56ac2b0",
+      "name": "LinkedIn Automation Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2672,
+        512
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Twitter - Space Handles": {
+      "main": [
+        [
+          {
+            "node": "Merge All News Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Every 15 Minutes - News Collection": {
+      "main": [
+        [
+          {
+            "node": "RSS - NASA/ESA/Space.com",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Twitter - Space Handles",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP API - Custom Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS - NASA/ESA/Space.com": {
+      "main": [
+        [
+          {
+            "node": "Merge All News Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP API - Custom Source": {
+      "main": [
+        [
+          {
+            "node": "Merge All News Sources",
+            "type": "main",
+            "index": 2
+          }
+        ],
+        [
+          {
+            "node": "Log Error - HTTP API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All News Sources": {
+      "main": [
+        [
+          {
+            "node": "Normalize Source Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Source Data": {
+      "main": [
+        [
+          {
+            "node": "Generate URL Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate URL Hash": {
+      "main": [
+        [
+          {
+            "node": "Prepare Seen URL Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Seen URLs": {
+      "main": [
+        [
+          {
+            "node": "Deduplication Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplication Logic": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4 Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Extract Metadata",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent - Extract Metadata",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Calculate Credibility Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Credibility Score": {
+      "main": [
+        [
+          {
+            "node": "Filter Score >= 60",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Score >= 60": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Generate Summaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4 Summary Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Generate Summaries",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Generate Summaries": {
+      "main": [
+        [
+          {
+            "node": "Parse Summaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Summaries": {
+      "main": [
+        [
+          {
+            "node": "Publish to Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Publish to CMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Raw Storage",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Processed Storage",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare URL Hash for Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Raw Storage": {
+      "main": [
+        [
+          {
+            "node": "Store Raw Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Processed Storage": {
+      "main": [
+        [
+          {
+            "node": "Store Processed Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 06:00 UTC - Digest Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Daily Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Daily Articles": {
+      "main": [
+        [
+          {
+            "node": "Aggregate for Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate for Digest": {
+      "main": [
+        [
+          {
+            "node": "Format Digest Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Digest Email": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Digest Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to Slack": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Log Error - Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to CMS": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Log Error - CMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Daily Digest Email": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Log Error - Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Seen URL Storage": {
+      "main": [
+        [
+          {
+            "node": "Check Seen URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Processed Articles": {
+      "main": [
+        []
+      ]
+    },
+    "Prepare URL Hash for Storage": {
+      "main": [
+        [
+          {
+            "node": "Store Seen URL Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 09:00 UTC - LinkedIn Posting": {
+      "main": [
+        [
+          {
+            "node": "Read LinkedIn Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read LinkedIn Topics": {
+      "main": [
+        [
+          {
+            "node": "Filter Pending Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Pending Topics": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Generate LinkedIn Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4 LinkedIn Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Generate LinkedIn Post",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Topic with Perplexity": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent - Generate LinkedIn Post",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Post Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent - Generate LinkedIn Post",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Generate LinkedIn Post": {
+      "main": [
+        [
+          {
+            "node": "Update Sheet - Mark Generated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sheet - Mark Generated": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Update Sheet - Mark Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "68a7d85b-60bc-4673-8d35-ccc58ef85dd4",
+  "meta": {
+    "instanceId": "2784a8b8b6d70df065cc185ef238cef76e08801d9b49d6dfd6a61cd2379d1e93"
+  },
+  "id": "lueKkNjlJceKvtR0",
+  "tags": []
+}
